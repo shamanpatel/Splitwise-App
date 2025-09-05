@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Splitwise App</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+
+<body class="bg-light">
+    <div class="container py-5">
+        <h1 class="mb-4">Splitwise App</h1>
+        <div class="row mb-4">
+            <div class="col-md-6">
+                <div class="card mb-3">
+                    <div class="card-header">Create User</div>
+                    <div class="card-body">
+                        <form id="userForm">
+                            <div class="mb-3">
+                                <label for="username" class="form-label">Username</label>
+                                <input type="text" class="form-control" id="username" required>
+                            </div>
+                            <div class="mb-3">
+                                <label for="email" class="form-label">Email</label>
+                                <input type="email" class="form-control" id="email" required>
+                            </div>
+                            <button type="submit" class="btn btn-primary">Add User</button>
+                        </form>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-header">Add Expense</div>
+                    <div class="card-body">
+                        <form id="expenseForm">
+                            <div class="mb-3">
+                                <label for="description" class="form-label">Description</label>
+                                <input type="text" class="form-control" id="description" required>
+                            </div>
+                            <div class="mb-3">
+                                <label for="amount" class="form-label">Amount</label>
+                                <input type="number" class="form-control" id="amount" min="0.01" step="0.01" required>
+                            </div>
+                            <div class="mb-3">
+                                <label for="currency" class="form-label">Currency</label>
+                                <select class="form-select" id="currency" required>
+                                    <option value="USD">USD</option>
+                                    <option value="EUR">EUR</option>
+                                    <option value="INR">INR</option>
+                                    <option value="GBP">GBP</option>
+                                </select>
+                            </div>
+                            <div class="mb-3">
+                                <label for="payer_id" class="form-label">Payer</label>
+                                <select class="form-select" id="payer_id" required></select>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Split With</label>
+                                <div id="splitUsers" class="mb-2"></div>
+                                <div class="form-check form-check-inline">
+                                    <input class="form-check-input" type="radio" name="splitType" id="splitEqual"
+                                        value="equal" checked>
+                                    <label class="form-check-label" for="splitEqual">Equally</label>
+                                </div>
+                                <div class="form-check form-check-inline">
+                                    <input class="form-check-input" type="radio" name="splitType" id="splitPercent"
+                                        value="percent">
+                                    <label class="form-check-label" for="splitPercent">By Percentage</label>
+                                </div>
+                            </div>
+                            <div id="percentInputs" style="display:none;"></div>
+                            <button type="submit" class="btn btn-success">Add Expense</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card mb-3">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <span>Users</span>
+                        <button id="clearBtn" class="btn btn-danger btn-sm">Clear All</button>
+                    </div>
+                    <ul class="list-group list-group-flush" id="userList"></ul>
+                </div>
+                <div class="card mb-3">
+                    <div class="card-header">Expenses</div>
+                    <ul class="list-group list-group-flush" id="expenseList"></ul>
+                </div>
+                <div class="card mb-3">
+                    <div class="card-header">User Report</div>
+                    <div class="card-body">
+                        <form id="reportForm" class="mb-2">
+                            <div class="input-group">
+                                <select class="form-select" id="reportUser"></select>
+                                <button type="submit" class="btn btn-info">Show Report</button>
+                            </div>
+                        </form>
+                        <div id="userReport"></div>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-header">Balances</div>
+                    <ul class="list-group list-group-flush" id="balanceList"></ul>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // --- State ---
+        let allUsers = [];
+
+        // Helper to fetch and update all UI lists
+        async function refreshAll() {
+            // Populate users first so other lists can use usernames safely
+            await populateUserSelects();
+            await Promise.all([
+                fetchUsers(),
+                fetchExpenses(),
+                fetchBalances()
+            ]);
+        }
+
+        // Fetch and display users
+        async function fetchUsers() {
+            const res = await fetch('/users');
+            const users = await res.json();
+            const userList = document.getElementById('userList');
+            userList.innerHTML = '';
+            users.forEach(u => {
+                const li = document.createElement('li');
+                li.className = 'list-group-item';
+                li.textContent = `${u.username} (${u.email})`;
+                userList.appendChild(li);
+            });
+        }
+
+        // Fetch and display expenses
+        async function fetchExpenses() {
+            const res = await fetch('/expenses');
+            const expenses = await res.json();
+            const expenseList = document.getElementById('expenseList');
+            expenseList.innerHTML = '';
+            expenses.forEach(e => {
+                const payer = allUsers.find(u => u.id === Number(e.payer_id));
+                let splitStr = e.splits.map(s => {
+                    const user = allUsers.find(u => u.id === Number(s.user_id));
+                    return `${user ? user.username : s.user_id}: ${s.amount} ${e.currency}${s.percentage !== null ? ' (' + s.percentage + '%)' : ''}`;
+                }).join(', ');
+                const li = document.createElement('li');
+                li.className = 'list-group-item';
+                li.textContent = `${e.description}: ${e.amount} ${e.currency} (Payer: ${payer ? payer.username : e.payer_id}) | Split: ${splitStr}`;
+                expenseList.appendChild(li);
+            });
+        }
+
+        // Fetch and display balances
+        async function fetchBalances() {
+            const res = await fetch('/balances');
+            const balances = await res.json();
+            const balanceList = document.getElementById('balanceList');
+            balanceList.innerHTML = '';
+            // Defensive: ensure allUsers is up to date
+            await populateUserSelects();
+            Object.values(balances).forEach(b => {
+                // Defensive: parse user_id as int
+                const userId = Number(b.user_id);
+                const user = allUsers.find(u => Number(u.id) === userId);
+                const username = user ? user.username : b.username;
+                const li = document.createElement('li');
+                li.className = 'list-group-item';
+                li.textContent = `${username}: Net $${b.net_balance} (Paid: $${b.total_paid}, Owes: $${b.total_owes})`;
+                balanceList.appendChild(li);
+            });
+        }
+
+        // --- UI helpers for split ---
+        async function populateUserSelects() {
+            const res = await fetch('/users');
+            const users = await res.json();
+            allUsers = users;
+            const payerSelect = document.getElementById('payer_id');
+            payerSelect.innerHTML = '';
+            users.forEach(u => {
+                const opt = document.createElement('option');
+                opt.value = u.id;
+                opt.textContent = u.username;
+                payerSelect.appendChild(opt);
+            });
+            // For split users
+            const splitUsersDiv = document.getElementById('splitUsers');
+            splitUsersDiv.innerHTML = '';
+            users.forEach(u => {
+                const check = document.createElement('input');
+                check.type = 'checkbox';
+                check.className = 'form-check-input me-1';
+                check.value = u.id;
+                check.id = 'splitUser_' + u.id;
+                splitUsersDiv.appendChild(check);
+                const label = document.createElement('label');
+                label.className = 'form-check-label me-3';
+                label.htmlFor = check.id;
+                label.textContent = u.username;
+                splitUsersDiv.appendChild(label);
+            });
+            // For report user select
+            const reportUser = document.getElementById('reportUser');
+            reportUser.innerHTML = '';
+            users.forEach(u => {
+                const opt = document.createElement('option');
+                opt.value = u.id;
+                opt.textContent = u.username;
+                reportUser.appendChild(opt);
+            });
+        }
+
+        // Show/hide percent inputs
+        document.getElementById('splitEqual').addEventListener('change', function () {
+            document.getElementById('percentInputs').style.display = 'none';
+        });
+        document.getElementById('splitPercent').addEventListener('change', function () {
+            document.getElementById('percentInputs').style.display = '';
+            updatePercentInputs();
+        });
+        document.getElementById('splitUsers').addEventListener('change', updatePercentInputs);
+        function updatePercentInputs() {
+            const percentDiv = document.getElementById('percentInputs');
+            percentDiv.innerHTML = '';
+            if (!document.getElementById('splitPercent').checked) return;
+            const checked = Array.from(document.querySelectorAll('#splitUsers input:checked'));
+            checked.forEach(c => {
+                const user = allUsers.find(u => u.id == c.value);
+                const group = document.createElement('div');
+                group.className = 'input-group mb-1';
+                group.innerHTML = `<span class='input-group-text'>${user.username}</span><input type='number' class='form-control percentInput' data-user='${user.id}' min='0' max='100' step='0.01' value='0'> <span class='input-group-text'>%</span>`;
+                percentDiv.appendChild(group);
+            });
+        }
+
+        // Handle user form submit
+        document.getElementById('userForm').addEventListener('submit', async function (e) {
+            e.preventDefault();
+            const username = document.getElementById('username').value;
+            const email = document.getElementById('email').value;
+            const res = await fetch('/users', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, email })
+            });
+            if (res.ok) {
+                this.reset();
+                await refreshAll();
+            } else {
+                const err = await res.json();
+                alert(err.error || 'Failed to add user');
+            }
+        });
+
+        // Handle expense form submit
+        document.getElementById('expenseForm').addEventListener('submit', async function (e) {
+            e.preventDefault();
+            const description = document.getElementById('description').value;
+            const amount = parseFloat(document.getElementById('amount').value);
+            const currency = document.getElementById('currency').value;
+            const payer_id = parseInt(document.getElementById('payer_id').value);
+            const splitType = document.querySelector('input[name="splitType"]:checked').value;
+            const checked = Array.from(document.querySelectorAll('#splitUsers input:checked'));
+            if (checked.length === 0) {
+                alert('Select at least one user to split with.');
+                return;
+            }
+            let splits = [];
+            if (splitType === 'equal') {
+                const equalAmount = amount / checked.length;
+                checked.forEach(c => {
+                    splits.push({ user_id: parseInt(c.value), amount: equalAmount, percentage: null });
+                });
+            } 
+                
+            else {
+                let totalPercent = 0;
+                checked.forEach((c, idx) => {
+                    const percentInput = document.querySelector(`.percentInput[data-user='${c.value}']`);
+                    const percent = parseFloat(percentInput?.value || '0');
+                    totalPercent += percent;
+                    let splitAmount = +(amount * percent / 100).toFixed(2);
+                    if (idx === checked.length - 1) {
+                        const sumPrev = splits.reduce((a, s) => a + s.amount, 0);
+                        splitAmount = +(amount - sumPrev).toFixed(2);
+                    }
+                    splits.push({ user_id: parseInt(c.value), amount: splitAmount, percentage: percent });
+                });
+                if (Math.abs(totalPercent - 100) > 0.01) {
+                    alert('Total percentage must be 100%.');
+                    return;
+                }
+            }
+            const res = await fetch('/expenses', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ description, amount, currency, payer_id, splits })
+            });
+            if (res.ok) {
+                this.reset();
+                await refreshAll(); // refresh immediately after POST succeeds
+            } else {
+                const err = await res.json();
+                alert(err.error || 'Failed to add expense');
+            }
+        });
+
+        // --- User report ---
+        document.getElementById('reportForm').addEventListener('submit', async function (e) {
+            e.preventDefault();
+            const userId = document.getElementById('reportUser').value;
+            const res = await fetch(`/user_report/${userId}`);
+            const data = await res.json();
+            const div = document.getElementById('userReport');
+            if (data.error) {
+                div.innerHTML = `<div class='alert alert-danger'>${data.error}</div>`;
+                return;
+            }
+            let html = '<h6>Paid:</h6><ul>';
+            data.paid.forEach(p => {
+                html += `<li>${p.description}: ${p.amount} ${p.currency}</li>`;
+            });
+            html += '</ul><h6>Owes:</h6><ul>';
+            data.owes.forEach(o => {
+                html += `<li>${o.description}: ${o.amount} ${o.currency} (${o.percentage ? o.percentage + '%' : 'equal'})</li>`;
+            });
+            html += '</ul>';
+            div.innerHTML = html;
+        });
+
+        // Handle clear all button click
+        document.getElementById('clearBtn').addEventListener('click', async function () {
+            if (!confirm('Are you sure you want to clear all users, expenses, and history?')) return;
+            const res = await fetch('/clear_all', { method: 'POST' });
+            if (res.ok) {
+                await refreshAll();
+                document.getElementById('userReport').innerHTML = '';
+            } else {
+                alert('Failed to clear history');
+            }
+        });
+
+        // Initial load
+        refreshAll();
+    </script>
+</body>
+
+</html>
